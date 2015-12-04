@@ -7,6 +7,8 @@ containers and non-RDF source are not implemented.
 
 Many thanks to Steve Speicher and Sam Padgett for their valuable contribution to LDP and this LDP middleware.
 
+Module planning, maintenance and issues can be see at at the [ldp-service](https://hub.jazz.net/project/jamsden/ldp-service/overview) IBM Bluemix DevOps Services project.
+
 
 ## Using
 
