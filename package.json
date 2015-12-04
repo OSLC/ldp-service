@@ -1,20 +1,22 @@
 {
-	"name": "ldp-service",
-	"version": "0.0.1",
-	"description": "An Express middleware for LDP that uses MongoDB for persistence of JSON-LD resources",
-	"license": "Apache-2.0",
-	"main":"service.js",
-	"author": "Sam Padgett",
-	"contributors": "Jim Amsden <jamsden@us.ibm.com>",
-	"dependencies": {
-		"express": "~4.13.3",
-		"n3": "~0.4.5",
-		"jsonld": "~0.4.2",
-		"mongodb": "~2.0.49"
-	},
-	"engines": {
-		"node": "~5.1.0"
-
-	},
-	"repository": {"type": "git", "url": "https://github.com/OSLC/ldp-server.git"}
+  "name": "ldp-service",
+  "version": "0.0.2",
+  "description": "An Express middleware for LDP that uses MongoDB for persistence of JSON-LD resources",
+  "license": "Apache-2.0",
+  "main": "service.js",
+  "author": "Sam Padgett",
+  "contributors": "Jim Amsden <jamsden@us.ibm.com>",
+  "dependencies": {
+    "express": "~4.13.3",
+    "n3": "~0.4.5",
+    "jsonld": "~0.4.2",
+    "mongodb": "~2.0.49"
+  },
+  "engines": {
+    "node": "~5.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/OSLC/ldp-server.git"
+  }
 }
