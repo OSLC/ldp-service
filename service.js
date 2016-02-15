@@ -47,16 +47,17 @@ var rawBody = function(req, res, next) {
 	});
 }
 
+var ldp = require('./vocab/ldp.js'); // LDP vocabulary
+var rdf = require('./vocab/rdf.js'); // RDF vocabulary
+var media = require('./media.js'); // media types
+var turtle = require('./turtle.js'); // text/turtle parsing and serialization
+var jsonld = require('./jsonld.js'); // application/ld+json parsing and serialization
+var crypto = require('crypto'); // for MD5 (ETags)
+
 /*
  * Middleware to handle all LDP requests
  */
 var ldpRoutes = function(db, env) {
-	var ldp = require('./vocab/ldp.js'); // LDP vocabulary
-	var rdf = require('./vocab/rdf.js'); // RDF vocabulary
-	var media = require('./media.js'); // media types
-	var turtle = require('./turtle.js'); // text/turtle parsing and serialization
-	var jsonld = require('./jsonld.js'); // application/ld+json parsing and serialization
-	var crypto = require('crypto'); // for MD5 (ETags)
 
 	var subApp = express();
 	subApp.use(fullURL);
@@ -444,37 +445,6 @@ var ldpRoutes = function(db, env) {
 		});
 	});
 
-	// creates a root container on first run
-	function createRootContainer(callback) {
-		var triples = [{
-			subject: env.ldpBase,
-			predicate: rdf.type,
-			object: ldp.Resource
-		}, {
-			subject: env.ldpBase,
-			predicate: rdf.type,
-			object: ldp.RDFSource
-		}, {
-			subject: env.ldpBase,
-			predicate: rdf.type,
-			object: ldp.Container
-		}, {
-			subject: env.ldpBase,
-			predicate: rdf.type,
-			object: ldp.BasicContainer
-		}, {
-			subject: env.ldpBase,
-			predicate: 'http://purl.org/dc/terms/title',
-			object: '"LDP.js root container"'
-		}];
-
-		db.put({
-			name: env.ldpBase,
-			interactionModel: ldp.BasicContainer,
-			triples: triples,
-			deleted: false
-		}, callback);
-	}
 
 	// create a membership resource for the container if it's a direct
 	// container and the membership resource is not the container itself
@@ -845,4 +815,37 @@ module.exports = function(env) {
 		});
 	});
 	return ldpRoutes(db, env);
+
+		// creates a root container on first run
+	function createRootContainer(callback) {
+		var triples = [{
+			subject: env.ldpBase,
+			predicate: rdf.type,
+			object: ldp.Resource
+		}, {
+			subject: env.ldpBase,
+			predicate: rdf.type,
+			object: ldp.RDFSource
+		}, {
+			subject: env.ldpBase,
+			predicate: rdf.type,
+			object: ldp.Container
+		}, {
+			subject: env.ldpBase,
+			predicate: rdf.type,
+			object: ldp.BasicContainer
+		}, {
+			subject: env.ldpBase,
+			predicate: 'http://purl.org/dc/terms/title',
+			object: '"LDP.js root container"'
+		}];
+
+		db.put({
+			name: env.ldpBase,
+			interactionModel: ldp.BasicContainer,
+			triples: triples,
+			deleted: false
+		}, callback);
+	}
+
 }
