@@ -47,7 +47,7 @@ exports.parse = function(req, resourceURI, callback) {
 			callback(err);
 		} else if (triple) {
 			triple.subject = normalize(triple.subject);
-			if (N3.Util.isUri(triple.object)) {
+			if (N3.Util.isIRI(triple.object)) {
 				triple.object = normalize(triple.object);
 			}
 			triples.push(triple);

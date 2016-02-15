@@ -1,6 +1,6 @@
 {
   "name": "ldp-service",
-  "version": "0.0.2",
+  "version": "0.0.4",
   "description": "An Express middleware for LDP that uses MongoDB for persistence of JSON-LD resources",
   "license": "Apache-2.0",
   "main": "service.js",
