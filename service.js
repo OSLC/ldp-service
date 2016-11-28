@@ -798,54 +798,8 @@ module.exports = function(env) {
 			console.error("Can't initialize MongoDB.");
 			return;
 		}
-		// create root container if it doesn't exist
-		db.get(env.ldpBase, function(err, document) {
-			if (err) {
-				console.log(err.stack);
-				return;
-			}
-
-			if (!document || document.deleted) {
-				createRootContainer(function(err) {
-					if (err) {
-						console.log(err.stack);
-					}
-				});
-			}
-		});
+	
 	});
 	return ldpRoutes(db, env);
-
-		// creates a root container on first run
-	function createRootContainer(callback) {
-		var triples = [{
-			subject: env.ldpBase,
-			predicate: rdf.type,
-			object: ldp.Resource
-		}, {
-			subject: env.ldpBase,
-			predicate: rdf.type,
-			object: ldp.RDFSource
-		}, {
-			subject: env.ldpBase,
-			predicate: rdf.type,
-			object: ldp.Container
-		}, {
-			subject: env.ldpBase,
-			predicate: rdf.type,
-			object: ldp.BasicContainer
-		}, {
-			subject: env.ldpBase,
-			predicate: 'http://purl.org/dc/terms/title',
-			object: '"LDP.js root container"'
-		}];
-
-		db.put({
-			name: env.ldpBase,
-			interactionModel: ldp.BasicContainer,
-			triples: triples,
-			deleted: false
-		}, callback);
-	}
 
 }
