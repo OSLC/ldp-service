@@ -1,6 +1,6 @@
 # ldp-service
 
-A simple Node.js module providing Express middleware to create a [W3C Linked Data Platform](http://www.w3.org/2012/ldp) server. The service uses MongoDB for persistence, jsonld.js for JSON-LD support, and a few other JavaScript libraries.  A sample app using the LDP middleware service is running at [http://ldp-app.mybluemix.net](http://ldp-app.mybluemix.net).
+A simple Node.js module providing Express middleware to create a [W3C Linked Data Platform](http://www.w3.org/2012/ldp) server. The service uses abstract module storage.js for persistence, jsonld.js for JSON-LD support, and a few other JavaScript libraries.  A sample app using the LDP middleware service is running at [http://ldp-app.mybluemix.net](http://ldp-app.mybluemix.net). Apps that use ldp-service can utilize existing concrete implementations of storage.js: ldp-service-jena, ldp-service-fs and/or ldp-service-mongodb. 
 
 ldp-service supports LDP basic and direct containers. Indirect
 containers and non-RDF source are not implemented.

@@ -7,16 +7,17 @@
   "author": "Sam Padgett",
   "contributors": "Jim Amsden <jamsden@us.ibm.com>",
   "dependencies": {
-    "express": "~4.13.4",
-    "n3": "~0.4.5",
-    "jsonld": "~0.4.2",
-    "mongodb": "~2.0.49"
+    "express": "~4.16.3",
+    "n3": "~0.11.3",
+    "jsonld": "~1.0.1",
+    "mongodb": "~3.0.7",
+    "ldp-service-mongodb": ""
   },
   "engines": {
     "node": "~5.1.0"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/OSLC/ldp-server.git"
+    "url": "https://github.com/OSLC/ldp-service.git"
   }
 }

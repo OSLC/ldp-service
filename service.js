@@ -790,7 +790,9 @@ var ldpRoutes = function(db, env) {
 
 module.exports = function(env) {
 	appBase = env.appBase;
-	var db = require('./db.js');
+	var db = require('./storage.js') // the abstract storage services
+	require('ldp-service-mongodb')(db)  // instantiate using a MongoDB implementation
+	console.dir(db)
 	module.exports.db = db; // allow the database to be used by other middleware
 	db.init(env, function(err) {
 		if (err) {
@@ -798,7 +800,7 @@ module.exports = function(env) {
 			console.error("Can't initialize MongoDB.");
 			return;
 		}
-	
+	console.log('db.initi started')
 	});
 	return ldpRoutes(db, env);
 
