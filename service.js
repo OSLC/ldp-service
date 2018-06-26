@@ -16,14 +16,24 @@
 
 /*
  * server.js is Express middleware that handles HTTP requests for LDP resources.
+ * It is built on an abstract storage implementation, storage.js that can be
+ * implemented on different data sources to expose them as LDP resources.
+ * The internal, in-memory representation of a resource is an rdflib.js
+ * IndexedFormula.
  */
 
-var express = require('express');
-var appBase = undefined;
+var express = require('express')
+var appBase = undefined
+var rdflib = require('rdflib')
+var RDF = rdflib.Namespace("http://www.w3.org/1999/02/22-rdf-syntax-ns#")
+var RDFS = rdflib.Namespace("http://www.w3.org/2000/01/rdf-schema#")
+
+// Some convenient namespaces
+var LDP = rdflib.Namespace('http://www.w3.org/ns/ldp#')
 
 /*
  * Middleware to create the full URI for the request for use in 
- * JSON-LD and MongoDB identifiers.
+ * storage identifiers.
  */
 var fullURL = function(req, res, next) {
 	req.fullURL = appBase + req.originalUrl;
@@ -47,12 +57,12 @@ var rawBody = function(req, res, next) {
 	});
 }
 
+var rdflib = require('rdflib')
 var ldp = require('./vocab/ldp.js'); // LDP vocabulary
 var rdf = require('./vocab/rdf.js'); // RDF vocabulary
 var media = require('./media.js'); // media types
-var turtle = require('./turtle.js'); // text/turtle parsing and serialization
-var jsonld = require('./jsonld.js'); // application/ld+json parsing and serialization
 var crypto = require('crypto'); // for MD5 (ETags)
+
 
 /*
  * Middleware to handle all LDP requests
@@ -69,45 +79,38 @@ var ldpRoutes = function(db, env) {
 		// all responses should have Link: <ldp:Resource> rel=type
 		var links = {
 			type: ldp.Resource
-		};
+		}
 		// also include implementation constraints
-		links[ldp.constrainedBy] = env.appBase + '/constraints.html';
-		res.links(links);
-		next();
-	});
+		links[ldp.constrainedBy] = env.appBase + '/constraints.html'
+		res.links(links)
+		next()
+	})
 
+	// Internal function to handle LDP GET and HEAD requests
 	function get(req, res, includeBody) {
-		res.set('Vary', 'Accept');
-		db.get(req.fullURL, function(err, document) {
+		res.set('Vary', 'Accept')
+		// delegate access to the resource to the storage service
+		// the document is an rdflib.js IndexedFormula
+		db.read(req.fullURL, function(err, document) {
 			if (err) {
-				console.log(err.stack);
-				res.sendStatus(500);
-				return;
-			}
-
-			if (!document) {
-				res.sendStatus(404);
-				return;
-			}
-
-			if (document.deleted) {
-				res.sendStatus(410);
-				return;
+				res.sendStatus(err)
+				return
 			}
 
 			// determine what format to serialize using the Accept header
-			var serialize;
+			var serialize
 			if (req.accepts(media.turtle)) {
-				serialize = turtle.serialize;
+				serialize = media.turtle
 			} else if (req.accepts(media.jsonld) || req.accepts(media.json)) {
-				serialize = jsonld.serialize;
+				serialize = media.jsonld
+			} else if (req.accepts(media.rdfxml)) {
+				serialize = media.rdfxml
 			} else {
-				res.sendStatus(406);
+				res.sendStatus(406)
 				return;
 			}
-
 			// add common response headers
-			addHeaders(res, document);
+			addHeaders(req, res, document)
 
 			// some triples like containment are calculated on-the-fly rather
 			// than being stored in the document
@@ -115,55 +118,54 @@ var ldpRoutes = function(db, env) {
 			// what to include
 			insertCalculatedTriples(req, document, function(err, preferenceApplied) {
 				if (err) {
-					console.log(err.stack);
-					res.sendStatus(500);
-					return;
+					console.log(err.stack)
+					res.sendStatus(500)
+					return
 				}
 
-				serialize(document.triples, function(err, contentType, content) {
+				// target must be undefined, and base must not be undefined to serialize properly
+				rdflib.serialize(undefined, document, req.fullURL, serialize, function(err, content) {
 					if (err) {
-						console.log(err.stack);
-						res.sendStatus(500);
-						return;
+						console.log(err.stack)
+						res.sendStatus(500)
+						return
 					}
 
 					if (preferenceApplied) {
-						res.set('Preference-Applied', 'return=representation');
+						res.set('Preference-Applied', 'return=representation')
 					}
 
 					// generate an ETag for the content
 					var eTag = getETag(content);
 					if (req.get('If-None-Match') === eTag) {
-						res.sendStatus(304);
-						return;
+						res.sendStatus(304)
+						return
 					}
 
 					res.writeHead(200, {
 						'ETag': eTag,
-						'Content-Type': contentType
-					});
+						'Content-Type': serialize
+					})
 					if (includeBody) {
-						res.end(new Buffer(content), 'utf-8');
+						res.end(new Buffer(content), 'utf-8')
 					} else {
-						res.end();
+						res.end()
 					}
-				});
-			});
-		});
-	}
+				})
+			})
+		})
+	} // get
 
 	resource.get(function(req, res, next) {
-		console.log('GET ' + req.path);
 		get(req, res, true);
 	});
 
 	resource.head(function(req, res, next) {
-		console.log('HEAD ' + req.path);
 		get(req, res, false);
 	});
 
 	function putUpdate(req, res, document, newTriples, serialize) {
-		if (isContainer(document)) {
+		if (isContainer(req.fullURL, document)) {
 			res.set('Allow', 'GET,HEAD,DELETE,OPTIONS,POST').sendStatus(405);
 			return;
 		}
@@ -215,7 +217,7 @@ var ldpRoutes = function(db, env) {
 				// resource so we don't store them directly
 				removeMembership(document);
 
-				db.put(document, function(err) {
+				db.update(document, function(err) {
 					if (err) {
 						console.log(err.stack);
 						res.sendStatus(500);
@@ -248,7 +250,7 @@ var ldpRoutes = function(db, env) {
 			return;
 		}
 
-		db.put(document, function(err) {
+		db.update(document, function(err) {
 			if (err) {
 				console.log(err.stack);
 				res.sendStatus(500);
@@ -270,7 +272,6 @@ var ldpRoutes = function(db, env) {
 	}
 
 	resource.put(function(req, res, next) {
-		console.log('PUT ' + req.path);
 		var parse, serialize;
 		if (req.is(media.turtle)) {
 			parse = turtle.parse;
@@ -290,7 +291,7 @@ var ldpRoutes = function(db, env) {
 			}
 
 			// get the resource to check if it exists and check its ETag
-			db.get(req.fullURL, function(err, document) {
+			db.read(req.fullURL, function(err, document) {
 				if (err) {
 					console.log(err.stack);
 					res.sendStatus(500);
@@ -312,7 +313,6 @@ var ldpRoutes = function(db, env) {
 	});
 
 	resource.post(function(req, res, next) {
-		console.log('POST ' + req.path);
 		db.findContainer(req.fullURL, function(err, container) {
 			if (err) {
 				console.log(err.stack);
@@ -357,7 +357,7 @@ var ldpRoutes = function(db, env) {
 					};
 
 					updateInteractionModel(document);
-					addHeaders(res, document);
+					addHeaders(req, res, document);
 
 					// check if the client requested a specific interaction model through a Link header
 					// if so, override what we found from the RDF content
@@ -384,7 +384,7 @@ var ldpRoutes = function(db, env) {
 					}
 
 					// create the resource
-					db.put(document, function(err) {
+					db.update(document, function(err) {
 						if (err) {
 							console.log(err.stack);
 							db.releaseURI(loc);
@@ -410,8 +410,7 @@ var ldpRoutes = function(db, env) {
 	});
 
 	resource.delete(function(req, res, next) {
-		console.log('DELETE: ' + req.path);
-		db.remove(req.fullURL, function(err, result) {
+		db.delete(req.fullURL, function(err, result) {
 			if (err) {
 				console.log(err.stack);
 				res.sendStatus(500);
@@ -423,7 +422,7 @@ var ldpRoutes = function(db, env) {
 	});
 
 	resource.options(function(req, res, next) {
-		db.get(req.fullURL, function(err, document) {
+		db.read(req.fullURL, function(err, document) {
 			if (err) {
 				console.log(err.stack);
 				res.sendStatus(500);
@@ -440,7 +439,7 @@ var ldpRoutes = function(db, env) {
 				return;
 			}
 
-			addHeaders(res, document);
+			addHeaders(req, res, document);
 			res.sendStatus(200);
 		});
 	});
@@ -466,14 +465,17 @@ var ldpRoutes = function(db, env) {
 	}
 
 	// add common headers to all responses
-	function addHeaders(res, document) {
-		var allow = 'GET,HEAD,DELETE,OPTIONS';
-		if (isContainer(document)) {
+	function addHeaders(req, res, document) {
+		var allow = 'GET,HEAD,DELETE,OPTIONS'
+		var interactionModel
+		if (document.any(document.sym(req.fullURL), LDP('BasicContainer'))) interactionModel = LDP('BasicContainer').url
+		if (document.any(document.sym(req.fullURL), LDP('DirectContainer'))) interactionModel = LDP('DirectContainer').url
+		if (interactionModel) {
 			res.links({
-				type: document.interactionModel
+				type: interactionModel
 			});
 			allow += ',POST';
-			res.set('Accept-Post', media.turtle + ',' + media.jsonld + ',' + media.json);
+			res.set('Accept-Post', media.turtle + ',' + media.jsonld + ',' + media.json + ',' + media.rdfxml);
 		} else {
 			allow += ',PUT';
 		}
@@ -484,8 +486,8 @@ var ldpRoutes = function(db, env) {
 	// checks if document represents a basic or direct container
 	// this is set using document.interactionModel and can't be changed
 	// we don't look at the RDF type
-	function isContainer(document) {
-		return document.interactionModel === ldp.BasicContainer || document.interactionModel === ldp.DirectContainer;
+	function isContainer(url, document) {
+		return document.any(document.sym(url), LDP('BasicContainer')) || document.any(document.sym(url), LDP('DirectContainer'))
 	}
 
 	// look at the triples to determine the type of container if this is a
@@ -578,7 +580,7 @@ var ldpRoutes = function(db, env) {
 			}
 
 			// next insert any dynamic triples if this is a container
-			if (!isContainer(document)) {
+			if (!isContainer(req.fullURL, document)) {
 				callback(null, preferenceApplied);
 				return;
 			}
@@ -667,14 +669,14 @@ var ldpRoutes = function(db, env) {
 
 		// remove special characters from the string (e.g., '/', '..', '?')
 		var lastSegment = path.replace(/[^\w\s\-_]/gi, '');
-		return uri + encodeURIComponent(lastSegment);
+		return uri + encodeURIComponent(lastSegment)
 	}
 
 	// generates and reserves a unique URI with base URI 'container'
 	function uniqueURI(container, callback) {
-		var candidate = addPath(container, 'res' + Date.now());
+		var candidate = addPath(container, 'res' + Date.now())
 		db.reserveURI(candidate, function(err) {
-			callback(err, candidate);
+			callback(err, candidate)
 		});
 	}
 
@@ -682,30 +684,31 @@ var ldpRoutes = function(db, env) {
 	// but falls back to the usual naming scheme if slug is already used
 	function assignURI(container, slug, callback) {
 		if (slug) {
-			var candidate = addPath(container, slug);
+			var candidate = addPath(container, slug)
 			db.reserveURI(candidate, function(err) {
 				if (err) {
-					uniqueURI(container, callback);
+					uniqueURI(container, callback)
 				} else {
-					callback(null, candidate);
+					callback(null, candidate)
 				}
 			});
 		} else {
-			uniqueURI(container, callback);
+			uniqueURI(container, callback)
 		}
 	}
 
 	// removes any membership triples from a membership resource before updating
 	// it in the database
-	// membership triples are not stored with the resource itself (see db.js)
+	// membership triples are not stored with the resource itself but are 
+	// calculated based on the Prefer header
 	function removeMembership(document) {
 		if (document.membershipResourceFor) {
 			// find the member relations. handle the case where the resource is
 			// a membership resource for more than one container.
-			var memberRelations = {};
+			var memberRelations = {}
 			document.membershipResourceFor.forEach(function(memberPattern) {
 				if (memberPattern.hasMemberRelation) {
-					memberRelations[memberPattern.hasMemberRelation] = 1;
+					memberRelations[memberPattern.hasMemberRelation] = 1
 				}
 			});
 
@@ -713,15 +716,15 @@ var ldpRoutes = function(db, env) {
 			document.triples = document.triples.filter(function(triple) {
 				// keep the triple if the subject is not the membership
 				// resource or the predicate is not one of the member relations
-				return triple.subject !== document.name || !memberRelations[triple.predicate];
-			});
+				return triple.subject !== document.name || !memberRelations[triple.predicate]
+			})
 		}
 	}
 
 	// look for a Link request header indicating the entity uses a ldp:Resource
 	// interaction model rather than container
 	function hasResourceLink(req) {
-		var link = req.get('Link');
+		var link = req.get('Link')
 		// look for links like
 		//	 <http://www.w3.org/ns/ldp#Resource>; rel="type"
 		// these are also valid
@@ -729,79 +732,76 @@ var ldpRoutes = function(db, env) {
 		//	 <http://www.w3.org/ns/ldp#Resource>; rel="type http://example.net/relation/other"
 		return link &&
 			/<http:\/\/www\.w3\.org\/ns\/ldp#Resource\>\s*;\s*rel\s*=\s*(("\s*([^"]+\s+)*type(\s+[^"]+)*\s*")|\s*type[\s,;$])/
-			.test(link);
+			.test(link)
 	}
 
 	function hasPreferInclude(req, inclusion) {
-		return hasPrefer(req, 'include', inclusion);
+		return hasPrefer(req, 'include', inclusion)
 	}
 
 	function hasPreferOmit(req, omission) {
-		return hasPrefer(req, 'omit', omission);
+		return hasPrefer(req, 'omit', omission)
 	}
 
 	function hasPrefer(req, token, parameter) {
 		if (!req) {
-			return false;
+			return false
 		}
 
-		var preferHeader = req.get('Prefer');
+		var preferHeader = req.get('Prefer')
 		if (!preferHeader) {
-			return false;
+			return false
 		}
 
 		// from the LDP prefer parameters, the only charcter we need to escape
 		// for regular expressions is '.'
 		// https://dvcs.w3.org/hg/ldpwg/raw-file/default/ldp.html#prefer-parameters
-		var word = parameter.replace(/\./g, '\\.');
+		var word = parameter.replace(/\./g, '\\.')
 
 		// construct a regex that matches the preference
 		var regex =
 		   	new RegExp(token + '\\s*=\\s*("\\s*([^"]+\\s+)*' + word + '(\\s+[^"]+)*\\s*"|' + word + '$)');
-		return regex.test(preferHeader);
+		return regex.test(preferHeader)
 	}
 
 	// check the consistency of the membership triple pattern if this is a direct container
 	function isMembershipPatternValid(document) {
 		if (document.interactionModel !== ldp.DirectContainer) {
 			// not a direct container, nothing to do
-			return true;
+			return true
 		}
 
 		// must have a membership resouce
 		if (!document.membershipResource) {
-			return false;
+			return false
 		}
 
 		// must have hasMemberRelation or isMemberOfRelation, but can't have both
 		if (document.hasMemberRelation) {
-			return !document.isMemberOfRelation;
+			return !document.isMemberOfRelation
 		}
 		if (document.isMemberOfRelation) {
-			return !document.hasMemberRelation;
+			return !document.hasMemberRelation
 		}
 
 		// no membership triple pattern
-		return false;
+		return false
 	}
-	return subApp;
+	return subApp
 }
 
 
 module.exports = function(env) {
-	appBase = env.appBase;
+	appBase = env.appBase
 	var db = require('./storage.js') // the abstract storage services
-	require('ldp-service-mongodb')(db)  // instantiate using a MongoDB implementation
-	console.dir(db)
-	module.exports.db = db; // allow the database to be used by other middleware
+	require(env.storageImpl)(db)  // instantiate using a specific storage services implementation
+	module.exports.db = db // allow the database to be used by other middleware
 	db.init(env, function(err) {
 		if (err) {
-			console.error(err);
-			console.error("Can't initialize MongoDB.");
-			return;
+			console.error(err)
+			console.error("Can't initialize the database.")
+			return
 		}
-	console.log('db.initi started')
 	});
-	return ldpRoutes(db, env);
-
+	return ldpRoutes(db, env)
 }

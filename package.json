@@ -8,13 +8,14 @@
   "contributors": "Jim Amsden <jamsden@us.ibm.com>",
   "dependencies": {
     "express": "~4.16.3",
-    "n3": "~0.11.3",
     "jsonld": "~1.0.1",
+    "ldp-service-jena": "file:~/Developer/LDP/ldp-service-jena",
     "mongodb": "~3.0.7",
-    "ldp-service-mongodb": ""
+    "n3": "~1.0.0-alpha",
+    "rdflib": "^0.17.0"
   },
   "engines": {
-    "node": "~5.1.0"
+    "node": "~8.11.1"
   },
   "repository": {
     "type": "git",

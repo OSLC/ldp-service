@@ -49,30 +49,52 @@ function ensureIndex() {
 }
 
 /*
- * Initialize the database
+ * Initialize the database. This could be done using
+ * the facilities of the DBMS and may not need to be implemented
+ * in all cases. It does provide a way to specify the env.dbName
+ * for the database you want to use, and makes sure the database
+ * exists and is initialized, possibly with at least one root
+ * container graph.
  */
 exports.init = function init(env, callback) {
-	throw "storage method init(env, callback) not implemented"
+	console.log("storage method init(env, callback) not implemented")
 }
 
+/*
+ * Drop an initialized database. This could be done using
+ * the facilities of the DBMS and may not need to be implemented
+ * in all cases. Implement this if you want init/drop to be able
+ * to dynamically create and remove databases. Don't implement
+ * it if you want the database to be already implemented outside
+ * the app.
+ */
 exports.drop = function drop(callback) {
-	throw "storage method drop(callback) not implemented"
+	console.log("storage method drop(callback) not implemented")
 }
 
+/*
+ * Used in create methods to reserve a URI for subsequent update. 
+ * Simply creates an empty graph.
+ */
 exports.reserveURI = function reserveURI(uri, callback) {
 	throw "storage method reserveURI(uri, callback) not implemented"
 }
 
+/*
+ * Releases a reserved URI that is no longer needed (i.e., the update
+ * will never be done)
+ */
 exports.releaseURI = function releaseURI(uri) {
 	throw "storage method releaseURI(uri) not implemented"
 }
 
-exports.put = function put(resource, callback) {
-	throw "storage method put(resource, callback) not implemented"
+
+exports.update = function update(resource, callback) {
+	throw "storage method uptate(resource, callback) not implemented"
 }
 
-exports.get = function get(uri, callback) {
-	throw "storage method get(uri, callback) not implemented"
+exports.read = function read(uri, callback) {
+	throw "storage method read(uri, callback) not implemented"
 }
 
 exports.remove = function remove(uri, callback) {
