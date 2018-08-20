@@ -115,7 +115,7 @@ var ldpRoutes = function(db, env) {
 			// some triples like containment are calculated on-the-fly rather
 			// than being stored in the document
 			// insertCalculatedTriples also looks at the Prefer header to see
-			// what to include
+			// what to include, the containment triples, membership predicates, or both
 			insertCalculatedTriples(req, document, function(err, preferenceApplied) {
 				if (err) {
 					console.log(err.stack)
@@ -124,7 +124,7 @@ var ldpRoutes = function(db, env) {
 				}
 
 				// target must be undefined, and base must not be undefined to serialize properly
-				rdflib.serialize(undefined, document, req.fullURL, serialize, function(err, content) {
+				rdflib.serialize(document.sym(req.fullURL), document, "none:", serialize, function(err, content) {
 					if (err) {
 						console.log(err.stack)
 						res.sendStatus(500)
@@ -147,7 +147,7 @@ var ldpRoutes = function(db, env) {
 						'Content-Type': serialize
 					})
 					if (includeBody) {
-						res.end(new Buffer(content), 'utf-8')
+						res.end(new Buffer.from(content), 'utf-8')
 					} else {
 						res.end()
 					}
@@ -219,8 +219,8 @@ var ldpRoutes = function(db, env) {
 
 				db.update(document, function(err) {
 					if (err) {
-						console.log(err.stack);
-						res.sendStatus(500);
+						console.log(err);
+						res.sendStatus(err);
 						return;
 					}
 
@@ -271,178 +271,166 @@ var ldpRoutes = function(db, env) {
 		});
 	}
 
+	/*
+	 * Imiplements the HTTP PUT method which requests that the enclosed entity be 
+	 * stored under the supplied Request-URI. Uses putUpdate to update an existing
+	 * resource and putCreate to create a new one.
+	 */
 	resource.put(function(req, res, next) {
-		var parse, serialize;
+		var parse, serialize
 		if (req.is(media.turtle)) {
-			parse = turtle.parse;
-			serialize = turtle.serialize;
+			parse = turtle.parse
+			serialize = turtle.serialize
 		} else if (req.is(media.jsonld) || req.is(media.json)) {
-			parse = jsonld.parse;
-			serialize = jsonld.serialize;
+			parse = jsonld.parse
+			serialize = jsonld.serialize
 		} else {
-			res.sendStatus(415);
+			res.sendStatus(415)
 			return;
 		}
-
-		parse(req, req.fullURL, function(err, newTriples) {
+		var newTriples = new rdflib.IndexedFormula()
+		rdfllib.parse(req.rawBody, newTriples, req.fullURL, function(err, newTriples) {
 			if (err) {
-				res.sendStatus(400);
-				return;
+				res.sendStatus(400)
+				return
 			}
 
 			// get the resource to check if it exists and check its ETag
 			db.read(req.fullURL, function(err, document) {
-				if (err) {
-					console.log(err.stack);
-					res.sendStatus(500);
-				}
-
-				if (document) {
-					if (document.deleted) {
-						res.sendStatus(410);
-						return;
-					}
-
+				if (err === 200) {
 					// the resource exists. update it
-					putUpdate(req, res, document, newTriples, serialize);
+					putUpdate(req, res, document, newTriples, serialize)
+				} else if (err == 404) {
+					// the resource doesn't exist, create it
+					putCreate(req, res, newTriples)
 				} else {
-					putCreate(req, res, newTriples);
+					// there was some error, send it along
+					console.log(err)
+					res.sendStatus(err)
 				}
-			});
-		});
-	});
+			})
+		})
+	})
 
+	/*
+	 * Implements HTTP POST to create new resources and add them to
+	 * a container.
+	 */
 	resource.post(function(req, res, next) {
+		// find the container for the URL
 		db.findContainer(req.fullURL, function(err, container) {
 			if (err) {
-				console.log(err.stack);
-				res.sendStatus(500);
-				return;
+				console.log(err)
+				res.sendStatus(500)
+				return
 			}
 
+			// ldp-service POST must be to a container
 			if (!container) {
-				res.set('Allow', 'GET,HEAD,PUT,DELETE,OPTIONS').sendStatus(405);
-				return;
+				res.set('Allow', 'GET,HEAD,PUT,DELETE,OPTIONS').sendStatus(405)
+				return
 			}
 
-			var parse;
+			var parse
 			if (req.is(media.turtle)) {
-				parse = turtle.parse;
+				parse = turtle.parse
 			} else if (req.is(media.jsonld) || req.is(media.json)) {
-				parse = jsonld.parse;
+				parse = jsonld.parse
 			} else {
-				res.sendStatus(415);
-				return;
+				res.sendStatus(415)
+				return
 			}
 
 			assignURI(req.fullURL, req.get('Slug'), function(err, loc) {
 				if (err) {
-					console.log(err.stack);
-					res.sendStatus(500);
-					return;
+					console.log(err)
+					res.sendStatus(500)
+					return
 				}
 
-				parse(req, loc, function(err, triples) {
+				var entity = new rdflib.IndexedFormula()
+				rdfllib.parse(req.rawBody, entity, loc, function(err, document) {
 					if (err) {
 						// allow the URI to be used again
-						db.releaseURI(loc);
-						res.sendStatus(400);
-						return;
+						db.releaseURI(loc)
+						res.sendStatus(400)
+						return
 					}
 
-					var document = {
-						name: loc,
-						containedBy: req.fullURL,
-						triples: triples
-					};
+					// TODO: Add the parent container to the parsed entity
 
-					updateInteractionModel(document);
-					addHeaders(req, res, document);
+					updateInteractionModel(document)
+					addHeaders(req, res, document)
 
 					// check if the client requested a specific interaction model through a Link header
 					// if so, override what we found from the RDF content
 					// FIXME: look for Link type=container as well
 					if (hasResourceLink(req)) {
-						document.interactionModel = ldp.RDFSource;
+						document.interactionModel = ldp.RDFSource
 					}
 
 					// check the membership triple pattern if this is a direct container
 					if (!isMembershipPatternValid(document)) {
-						db.releaseURI(loc);
-						res.sendStatus(409);
-						return;
+						db.releaseURI(loc)
+						res.sendStatus(409)
+						return
 					}
 
-					// add the "inverse" isMemberOfRelation link if needed
+					// TODO: add the "inverse" isMemberOfRelation link if needed
 					if (container.interactionModel === ldp.DirectContainer &&
 							container.isMemberOfRelation) {
-						document.triples.push({
-							subject: loc,
-							predicate: container.isMemberOfRelation,
-							object: req.fullURL
-						});
+						document.add(rdflib.sym(loc), rdflib.sym(container.isMemberOfRelation), rdflib.sym(req.fullURL))
 					}
 
 					// create the resource
 					db.update(document, function(err) {
 						if (err) {
-							console.log(err.stack);
-							db.releaseURI(loc);
-							res.sendStatus(500);
-							return;
+							console.log("Cannot create resource: "+err)
+							db.releaseURI(loc)
+							res.sendStatus(500)
+							return
 						}
 
 						// create a membership resource if necessary.
 						createMembershipResource(document, function(err) {
 							if (err) {
-								console.log(err.stack);
-								db.releaseURI(loc);
-								res.sendStatus(500);
-								return;
+								console.log("Cannot create membership resource: "+err);
+								db.releaseURI(loc)
+								res.sendStatus(500)
+								return
 							}
 
-							res.location(loc).sendStatus(201);
-						});
-					});
-				});
-			});
-		});
-	});
+							res.location(loc).sendStatus(201)
+						})
+					})
+				})
+			})
+		})
+	})
 
 	resource.delete(function(req, res, next) {
-		db.delete(req.fullURL, function(err, result) {
+		db.remove(req.fullURL, function(err, result) {
 			if (err) {
-				console.log(err.stack);
-				res.sendStatus(500);
-				return;
+				console.log(err.stack)
+				res.sendStatus(500)
+				return
 			}
 
-			res.sendStatus(result ? 204 : 404);
-		});
-	});
+			res.sendStatus(result ? 204 : 404)
+		})
+	})
 
 	resource.options(function(req, res, next) {
 		db.read(req.fullURL, function(err, document) {
 			if (err) {
-				console.log(err.stack);
-				res.sendStatus(500);
-				return;
+				console.log("Cannot get options on resource: "+err)
+				res.sendStatus(err)
+				return
 			}
-
-			if (!document) {
-				res.sendStatus(404);
-				return;
-			}
-
-			if (document.deleted) {
-				res.sendStatus(410);
-				return;
-			}
-
-			addHeaders(req, res, document);
-			res.sendStatus(200);
-		});
-	});
+			addHeaders(req, res, document)
+			res.sendStatus(200)
+		})
+	})
 
 
 	// create a membership resource for the container if it's a direct
@@ -468,8 +456,8 @@ var ldpRoutes = function(db, env) {
 	function addHeaders(req, res, document) {
 		var allow = 'GET,HEAD,DELETE,OPTIONS'
 		var interactionModel
-		if (document.any(document.sym(req.fullURL), LDP('BasicContainer'))) interactionModel = LDP('BasicContainer').url
-		if (document.any(document.sym(req.fullURL), LDP('DirectContainer'))) interactionModel = LDP('DirectContainer').url
+		if (document.statementsMatching(document.sym(req.fullURL), RDF('type'), LDP('BasicContainer')).length !==0) interactionModel = LDP('BasicContainer').value
+		if (document.statementsMatching(document.sym(req.fullURL), RDF('type'), LDP('DirectContainer')).length !==0) interactionModel = LDP('DirectContainer').value
 		if (interactionModel) {
 			res.links({
 				type: interactionModel
@@ -484,10 +472,20 @@ var ldpRoutes = function(db, env) {
 	}
 
 	// checks if document represents a basic or direct container
-	// this is set using document.interactionModel and can't be changed
-	// we don't look at the RDF type
+	// and sets the document.interactionModel and can't be changed
 	function isContainer(url, document) {
-		return document.any(document.sym(url), LDP('BasicContainer')) || document.any(document.sym(url), LDP('DirectContainer'))
+		var interactionModel = null
+		document.uri = url // The container URL
+		if (document.statementsMatching(document.sym(url), RDF('type'), LDP('BasicContainer')).length !==0) interactionModel = LDP('BasicContainer').value
+		if (document.statementsMatching(document.sym(url), RDF('type'), LDP('DirectContainer')).length !==0) interactionModel = LDP('DirectContainer').value
+		document.interactionModel = interactionModel
+		if (document.interactionModel === ldp.DirectContainer) {
+			var statement = document.any(document.sym(url), LDP("membershipResource"))
+			if (statement) document.membershipResource = statement.value
+			statement = document.any(document.sym(url), LDP("hasMemberRelation"))
+			if (statement) document.hasMemberRelation = statement.value
+		}
+		return interactionModel != null
 	}
 
 	// look at the triples to determine the type of container if this is a
@@ -627,28 +625,20 @@ var ldpRoutes = function(db, env) {
 				return;
 			}
 
-			db.getContainment(document.name, function(err, containment) {
+			db.getContainment(document, function(err, containment) {
 				if (err) {
 					callback(err);
 					return;
 				}
 
 				if (containment) {
-					containment.forEach(function(resource) {
+					containment.forEach(function(member) {
 						if (includeContainment) {
-							document.triples.push({
-								subject: document.name,
-								predicate: ldp.contains,
-								object: resource
-							});
+							document.add(document.sym(document.uri), LDP('contains'), document.sym(member.member.value), document.sym(document.uri))
 						}
 
 						if (includeMembership) {
-							document.triples.push({
-								subject: document.membershipResource,
-								predicate: document.hasMemberRelation,
-								object: resource
-							});
+							document.add(document.sym(document.membershipResource), document.sym(document.hasMemberRelation), document.sym(member.member.value), document.sym(document.uri))
 						}
 					});
 				}
