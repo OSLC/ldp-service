@@ -97,6 +97,9 @@ var ldpRoutes = function(db, env) {
 				return
 			}
 
+			// add common response headers
+			addHeaders(req, res, document)
+
 			// determine what format to serialize using the Accept header
 			var serialize
 			if (req.accepts(media.turtle)) {
@@ -109,8 +112,6 @@ var ldpRoutes = function(db, env) {
 				res.sendStatus(406)
 				return;
 			}
-			// add common response headers
-			addHeaders(req, res, document)
 
 			// some triples like containment are calculated on-the-fly rather
 			// than being stored in the document
@@ -123,7 +124,8 @@ var ldpRoutes = function(db, env) {
 					return
 				}
 
-				// target must be undefined, and base must not be undefined to serialize properly
+				// Serialize the resource
+				// target must be undefined, and base set to an unused prefix to get the proper namespaces and URIs
 				rdflib.serialize(document.sym(req.fullURL), document, "none:", serialize, function(err, content) {
 					if (err) {
 						console.log(err.stack)
@@ -165,7 +167,7 @@ var ldpRoutes = function(db, env) {
 	});
 
 	function putUpdate(req, res, document, newTriples, serialize) {
-		if (isContainer(req.fullURL, document)) {
+		if (getInteractionMocel(req.fullURL, document)) {
 			res.set('Allow', 'GET,HEAD,DELETE,OPTIONS,POST').sendStatus(405);
 			return;
 		}
@@ -455,12 +457,9 @@ var ldpRoutes = function(db, env) {
 	// add common headers to all responses
 	function addHeaders(req, res, document) {
 		var allow = 'GET,HEAD,DELETE,OPTIONS'
-		var interactionModel
-		if (document.statementsMatching(document.sym(req.fullURL), RDF('type'), LDP('BasicContainer')).length !==0) interactionModel = LDP('BasicContainer').value
-		if (document.statementsMatching(document.sym(req.fullURL), RDF('type'), LDP('DirectContainer')).length !==0) interactionModel = LDP('DirectContainer').value
-		if (interactionModel) {
+		if (document.interactionModel) {
 			res.links({
-				type: interactionModel
+				type: document.interactionModel
 			});
 			allow += ',POST';
 			res.set('Accept-Post', media.turtle + ',' + media.jsonld + ',' + media.json + ',' + media.rdfxml);
@@ -469,23 +468,6 @@ var ldpRoutes = function(db, env) {
 		}
 
 		res.set('Allow', allow);
-	}
-
-	// checks if document represents a basic or direct container
-	// and sets the document.interactionModel and can't be changed
-	function isContainer(url, document) {
-		var interactionModel = null
-		document.uri = url // The container URL
-		if (document.statementsMatching(document.sym(url), RDF('type'), LDP('BasicContainer')).length !==0) interactionModel = LDP('BasicContainer').value
-		if (document.statementsMatching(document.sym(url), RDF('type'), LDP('DirectContainer')).length !==0) interactionModel = LDP('DirectContainer').value
-		document.interactionModel = interactionModel
-		if (document.interactionModel === ldp.DirectContainer) {
-			var statement = document.any(document.sym(url), LDP("membershipResource"))
-			if (statement) document.membershipResource = statement.value
-			statement = document.any(document.sym(url), LDP("hasMemberRelation"))
-			if (statement) document.hasMemberRelation = statement.value
-		}
-		return interactionModel != null
 	}
 
 	// look at the triples to determine the type of container if this is a
@@ -542,7 +524,7 @@ var ldpRoutes = function(db, env) {
 			var preferenceApplied = hasPreferInclude(req, ldp.PreferMembership);
 			var inserted = 0;
 			patterns.forEach(function(pattern) {
-				db.getContainment(pattern.container, function(err, containment) {
+				db.getMembershipTriples(pattern.container, function(err, containment) {
 					if (err) {
 						callback(err);
 						return;
@@ -577,11 +559,13 @@ var ldpRoutes = function(db, env) {
 				return;
 			}
 
-			// next insert any dynamic triples if this is a container
-			if (!isContainer(req.fullURL, document)) {
+			// all done if this is not a container
+			if (document.interactionModel === null) {
 				callback(null, preferenceApplied);
 				return;
 			}
+
+			// next insert any dynamic triples if this is a container
 
 			// check if client is asking for a minimal container
 			var minimal = false;
@@ -625,14 +609,14 @@ var ldpRoutes = function(db, env) {
 				return;
 			}
 
-			db.getContainment(document, function(err, containment) {
+			db.getMembershipTriples(document, function(err, members) {
 				if (err) {
 					callback(err);
 					return;
 				}
 
-				if (containment) {
-					containment.forEach(function(member) {
+				if (members) {
+					members.forEach(function(member) {
 						if (includeContainment) {
 							document.add(document.sym(document.uri), LDP('contains'), document.sym(member.member.value), document.sym(document.uri))
 						}

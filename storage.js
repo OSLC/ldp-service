@@ -105,7 +105,7 @@ exports.findContainer = function findContainer(uri, callback) {
 	throw "storage method findContainer(uri, callback) not implemented"
 }
 
-exports.getContainment = function getContainment(uri, callback) {
+exports.getMembershipTriples = function getMembershipTriples(container, callback) {
 	throw "storage method getContainment(uri, callback) not implemented"
 }
 
