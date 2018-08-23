@@ -109,8 +109,5 @@ exports.getMembershipTriples = function getMembershipTriples(container, callback
 	throw "storage method getContainment(uri, callback) not implemented"
 }
 
-exports.createMembershipResource = function createMembershipResource(resource, callback) {
-	throw "storage method createMembershipResource(resource, callback) not implemented"
-}
 
 

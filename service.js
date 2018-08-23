@@ -92,7 +92,7 @@ var ldpRoutes = function(db, env) {
 		// delegate access to the resource to the storage service
 		// the document is an rdflib.js IndexedFormula
 		db.read(req.fullURL, function(err, document) {
-			if (err) {
+			if (err !== 200) {
 				res.sendStatus(err)
 				return
 			}
@@ -167,7 +167,8 @@ var ldpRoutes = function(db, env) {
 	});
 
 	function putUpdate(req, res, document, newTriples, serialize) {
-		if (getInteractionMocel(req.fullURL, document)) {
+		// LDP servers should not support update of LDPCs
+		if (document.interactionModel === ldp.BasicContainer || document.interactionModel === ldp.DirectContainer) {
 			res.set('Allow', 'GET,HEAD,DELETE,OPTIONS,POST').sendStatus(405);
 			return;
 		}
@@ -178,98 +179,53 @@ var ldpRoutes = function(db, env) {
 			return;
 		}
 
-		// add membership triples if necessary to calculate the correct ETag
-		insertCalculatedTriples(null, document, function(err) {
+		if (req.is(media.turtle)) {
+			serialize = media.turtle;
+		} else {
+			serialize = media.jsonld;
+		}
+
+		// serialize the read document in order to calculate the ETag from the matching representation
+	    rdflib.serialize(document.sym(document.uri), document, "none:", serialize, function(err, content) {
 			if (err) {
 				console.log(err.stack);
 				res.sendStatus(500);
 				return;
 			}
-
-			if (req.is(media.turtle)) {
-				serialize = turtle.serialize;
-			} else {
-				serialize = jsonld.serialize;
+			var eTag = getETag(content);
+			if (ifMatch !== eTag) {
+				res.sendStatus(412);
+				return;
 			}
 
-			// calculate the ETag from the matching representation
-			serialize(document.triples, function(err, contentType, content) {
-				if (err) {
-					console.log(err.stack);
-					res.sendStatus(500);
-					return;
-				}
+			// determine if there are changes to the interaction model
+			updateInteractionModel(newTriples);
 
-				var eTag = getETag(content);
-				if (ifMatch !== eTag) {
-					res.sendStatus(412);
-					return;
-				}
-
-				// remove any containment triples from the request body if this
-				// is a container.  then update the document with the new
-				// triples.  we store containment with the resources
-				// themselves, not in the container document.
-				document.triples = newTriples;
-
-				// determine if there are changes to the interaction model
-				updateInteractionModel(document);
-
-				// remove any membership triples if this is a membership
-				// resource so we don't store them directly
-				removeMembership(document);
-
-				db.update(document, function(err) {
-					if (err) {
-						console.log(err);
-						res.sendStatus(err);
-						return;
-					}
-
-					res.sendStatus(204);
-				});
+			db.update(newTriples, function(err) {
+				res.sendStatus(err);
 			});
 		});
 	}
 
-	function putCreate(req, res, triples) {
-		var document = {
-			name: req.fullURL,
-			triples: triples
-		};
-		updateInteractionModel(document);
+	function putCreate(req, res, document) {
+		document.uri = req.fullURL
+		updateInteractionModel(document)
 
 		// check if the client requested a specific interaction model through a
 		// Link header.  if so, override what we found from the RDF content.
 		// FIXME: look for Link type=container as well
 		if (hasResourceLink(req)) {
-			document.interactionModel = ldp.RDFSource;
+			document.interactionModel = ldp.RDFSource
 		}
 
 		// check the membership triple pattern if this is a direct container
 		if (!isMembershipPatternValid(document)) {
-			res.sendStatus(409);
-			return;
+			res.sendStatus(409)
+			return
 		}
 
 		db.update(document, function(err) {
-			if (err) {
-				console.log(err.stack);
-				res.sendStatus(500);
-				return;
-			}
-
-			// create a membership resource if necessary.
-			createMembershipResource(document, function(err) {
-				if (err) {
-					console.log(err.stack);
-					db.releaseURI(loc);
-					res.sendStatus(500);
-					return;
-				}
-
-				res.sendStatus(201);
-			});
+			res.sendStatus(err)
 		});
 	}
 
@@ -279,23 +235,22 @@ var ldpRoutes = function(db, env) {
 	 * resource and putCreate to create a new one.
 	 */
 	resource.put(function(req, res, next) {
-		var parse, serialize
+		var serialize
 		if (req.is(media.turtle)) {
-			parse = turtle.parse
-			serialize = turtle.serialize
+			serialize = media.turtle
 		} else if (req.is(media.jsonld) || req.is(media.json)) {
-			parse = jsonld.parse
-			serialize = jsonld.serialize
+			serialize = media.jsonld
 		} else {
 			res.sendStatus(415)
 			return;
 		}
 		var newTriples = new rdflib.IndexedFormula()
-		rdfllib.parse(req.rawBody, newTriples, req.fullURL, function(err, newTriples) {
+		rdflib.parse(req.rawBody, newTriples, req.fullURL, serialize, function(err, newTriples) {
 			if (err) {
 				res.sendStatus(400)
 				return
 			}
+			newTriples.uri = req.fullURL
 
 			// get the resource to check if it exists and check its ETag
 			db.read(req.fullURL, function(err, document) {
@@ -392,18 +347,7 @@ var ldpRoutes = function(db, env) {
 							res.sendStatus(500)
 							return
 						}
-
-						// create a membership resource if necessary.
-						createMembershipResource(document, function(err) {
-							if (err) {
-								console.log("Cannot create membership resource: "+err);
-								db.releaseURI(loc)
-								res.sendStatus(500)
-								return
-							}
-
-							res.location(loc).sendStatus(201)
-						})
+						res.location(loc).sendStatus(201)
 					})
 				})
 			})
@@ -417,8 +361,7 @@ var ldpRoutes = function(db, env) {
 				res.sendStatus(500)
 				return
 			}
-
-			res.sendStatus(result ? 204 : 404)
+			res.sendStatus(result.statusCode)
 		})
 	})
 
@@ -434,19 +377,6 @@ var ldpRoutes = function(db, env) {
 		})
 	})
 
-
-	// create a membership resource for the container if it's a direct
-	// container and the membership resource is not the container itself
-	function createMembershipResource(document, callback) {
-		if (document.interactionModel === ldp.DirectContainer &&
-			document.membershipResource &&
-			document.membershipResource !== document.name) {
-			// create membership resource
-			db.createMembershipResource(document, callback);
-		} else {
-			callback();
-		}
-	}
 
 	// generate an ETag for a response using an MD5 hash
 	// note: insert any calculated triples before calling getETag()
@@ -474,34 +404,18 @@ var ldpRoutes = function(db, env) {
 	// container and, if a direct container, its membership pattern
 	function updateInteractionModel(document) {
 		var interactionModel = ldp.RDFSource;
-		document.triples.forEach(function(triple) {
-			var s = triple.subject,
-				p = triple.predicate,
-				o = triple.object;
-			if (s !== document.name) {
-				return;
-			}
 
-			// determine the interaction model from the RDF type
-			// direct takes precedence if the resource has both direct and basic RDF types
-			if (p === rdf.type && interactionModel !== ldp.DirectContainer && (o === ldp.BasicContainer || o === ldp.DirectContainer)) {
-				interactionModel = o;
-				return;
-			}
-
-			if (p === ldp.membershipResource) {
-				document.membershipResource = o;
-				return;
-			}
-
-			if (p === ldp.hasMemberRelation) {
-				document.hasMemberRelation = o;
-			}
-
-			if (p === ldp.isMemberOfRelation) {
-				document.isMemberOfRelation = o;
-			}
-		});
+        var uriSym = document.sym(document.uri)
+        if (document.statementsMatching(uriSym, RDF('type'), LDP('BasicContainer')).length !==0) interactionModel = ldp.BasicContainer
+        if (document.statementsMatching(uriSym, RDF('type'), LDP('DirectContainer')).length !==0) interactionModel = ldp.DirectContainer
+        if (interactionModel === ldp.DirectContainer) {
+            var statement = document.any(uriSym, LDP("membershipResource"))
+            if (statement) document.membershipResource = statement.value
+            statement = document.any(uriSym, LDP("hasMemberRelation"))
+            if (statement) document.hasMemberRelation = statement.value
+            statement = document.any(uriSym, LDP("isMemberOfRelation"))
+            if (statement) document.isMemberOfRelation = statement.value
+        }
 
 		// don't override an existing interaction model
 		if (!document.interactionModel) {
