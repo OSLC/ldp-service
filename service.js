@@ -118,8 +118,7 @@ var ldpRoutes = function(db, env) {
 			// insertCalculatedTriples also looks at the Prefer header to see
 			// what to include, the containment triples, membership predicates, or both
 			insertCalculatedTriples(req, document, function(err, preferenceApplied) {
-				if (err) {
-					console.log(err.stack)
+				if (err !== 200) {
 					res.sendStatus(500)
 					return
 				}
@@ -247,7 +246,7 @@ var ldpRoutes = function(db, env) {
 		var newTriples = new rdflib.IndexedFormula()
 		rdflib.parse(req.rawBody, newTriples, req.fullURL, serialize, function(err, newTriples) {
 			if (err) {
-				res.sendStatus(400)
+				res.sendStatus(500)
 				return
 			}
 			newTriples.uri = req.fullURL
@@ -257,12 +256,11 @@ var ldpRoutes = function(db, env) {
 				if (err === 200) {
 					// the resource exists. update it
 					putUpdate(req, res, document, newTriples, serialize)
-				} else if (err == 404) {
+				} else if (err === 404) {
 					// the resource doesn't exist, create it
 					putCreate(req, res, newTriples)
 				} else {
 					// there was some error, send it along
-					console.log(err)
 					res.sendStatus(err)
 				}
 			})
@@ -275,73 +273,80 @@ var ldpRoutes = function(db, env) {
 	 */
 	resource.post(function(req, res, next) {
 		// find the container for the URL
-		db.findContainer(req.fullURL, function(err, container) {
-			if (err) {
-				console.log(err)
-				res.sendStatus(500)
-				return
+		db.read(req.fullURL, function(err, container) {
+			if (err !== 200) {
+				console.log(`cannot POST to LDPC ${req.fullURL}, got: ${err}`);
+				res.sendStatus(err);
+				return;
 			}
 
 			// ldp-service POST must be to a container
-			if (!container) {
+			if (!container.interactionModel) {
 				res.set('Allow', 'GET,HEAD,PUT,DELETE,OPTIONS').sendStatus(405)
 				return
 			}
 
-			var parse
+			// determine how to serialize the entity request body, the resource being added to the LDPC
+			var serialize
 			if (req.is(media.turtle)) {
-				parse = turtle.parse
+				serialize = media.turtle
 			} else if (req.is(media.jsonld) || req.is(media.json)) {
-				parse = jsonld.parse
+				serialize = media.jsonld
 			} else {
 				res.sendStatus(415)
-				return
+				return;
 			}
 
 			assignURI(req.fullURL, req.get('Slug'), function(err, loc) {
-				if (err) {
+				if (err !== 201) {
 					console.log(err)
 					res.sendStatus(500)
 					return
 				}
 
-				var entity = new rdflib.IndexedFormula()
-				rdfllib.parse(req.rawBody, entity, loc, function(err, document) {
+				// Parse the entity response body, the resource to add to the container
+				var newMember = new rdflib.IndexedFormula();
+				newMember.uri = loc; 
+				rdflib.parse(req.rawBody, newMember, loc, serialize, function(err, document) {
+					// document and newMember are the same thing from here on...
 					if (err) {
-						// allow the URI to be used again
+						// allow the URI to be used again if this is a bad request
+						console.log(`error parsing POST body for ${loc}, error: ${err}`);
 						db.releaseURI(loc)
 						res.sendStatus(400)
 						return
 					}
-
-					// TODO: Add the parent container to the parsed entity
-
-					updateInteractionModel(document)
-					addHeaders(req, res, document)
+					updateInteractionModel(newMember); // newMember is RDFResource, DirectContainer or BasicContainer
+					addHeaders(req, res, newMember)
 
 					// check if the client requested a specific interaction model through a Link header
 					// if so, override what we found from the RDF content
-					// FIXME: look for Link type=container as well
+					// TODO: look for Link type=container as well
 					if (hasResourceLink(req)) {
-						document.interactionModel = ldp.RDFSource
+						newMember.interactionModel = ldp.RDFSource
 					}
 
-					// check the membership triple pattern if this is a direct container
-					if (!isMembershipPatternValid(document)) {
+					// check the membership triple pattern if the new member is a direct container
+					if (!isMembershipPatternValid(newMember)) {
 						db.releaseURI(loc)
 						res.sendStatus(409)
 						return
 					}
 
-					// TODO: add the "inverse" isMemberOfRelation link if needed
-					if (container.interactionModel === ldp.DirectContainer &&
-							container.isMemberOfRelation) {
-						document.add(rdflib.sym(loc), rdflib.sym(container.isMemberOfRelation), rdflib.sym(req.fullURL))
-					}
-
-					// create the resource
-					db.update(document, function(err) {
-						if (err) {
+					// Add the membership triple required to realize the containment
+					if (container.interactionModel === ldp.DirectContainer) {
+						if (container.isMemberOfRelation) {
+							newMember.add(rdflib.sym(loc), rdflib.sym(container.isMemberOfRelation), rdflib.sym(container.membershipResource));
+						} else {
+							// container uses hasMemberRelation
+							let data = new rdflib.IndexedFormula();
+							data.add(rdflib.sym(container.membershipResource), rdflib.sym(container.hasMemberRelation), rdflib.sym(loc));
+							db.insertData(data, container.membershipResource, status => {});
+						}
+					} 
+					// update the membership resource
+					db.update(newMember, function(err) {
+						if (err !== 201) {
 							console.log("Cannot create resource: "+err)
 							db.releaseURI(loc)
 							res.sendStatus(500)
@@ -355,19 +360,14 @@ var ldpRoutes = function(db, env) {
 	})
 
 	resource.delete(function(req, res, next) {
-		db.remove(req.fullURL, function(err, result) {
-			if (err) {
-				console.log(err.stack)
-				res.sendStatus(500)
-				return
-			}
-			res.sendStatus(result.statusCode)
+		db.remove(req.fullURL, function(status) {
+			res.sendStatus(status)
 		})
 	})
 
 	resource.options(function(req, res, next) {
 		db.read(req.fullURL, function(err, document) {
-			if (err) {
+			if (err !== 200) {
 				console.log("Cannot get options on resource: "+err)
 				res.sendStatus(err)
 				return
@@ -429,7 +429,7 @@ var ldpRoutes = function(db, env) {
 		var patterns = document.membershipResourceFor;
 		if (patterns) {
 			if (hasPreferOmit(req, ldp.PreferMembership)) {
-				callback(null, true); // preference applied
+				callback(200, true); // preference applied
 				return;
 			}
 
@@ -439,7 +439,7 @@ var ldpRoutes = function(db, env) {
 			var inserted = 0;
 			patterns.forEach(function(pattern) {
 				db.getMembershipTriples(pattern.container, function(err, containment) {
-					if (err) {
+					if (err !== 200) {
 						callback(err);
 						return;
 					}
@@ -455,12 +455,12 @@ var ldpRoutes = function(db, env) {
 					}
 
 					if (++inserted === patterns.length) {
-						callback(null, preferenceApplied);
+						callback(200, preferenceApplied);
 					}
 				});
 			});
 		} else {
-			callback(null, false);
+			callback(200, false);
 		}
 	}
 
@@ -468,14 +468,14 @@ var ldpRoutes = function(db, env) {
 	function insertCalculatedTriples(req, document, callback) {
 		// insert membership if this is a membership resource
 		insertMembership(req, document, function(err, preferenceApplied) {
-			if (err) {
+			if (err !== 200) {
 				callback(err);
 				return;
 			}
 
 			// all done if this is not a container
 			if (document.interactionModel === null) {
-				callback(null, preferenceApplied);
+				callback(200, preferenceApplied);
 				return;
 			}
 
@@ -524,7 +524,7 @@ var ldpRoutes = function(db, env) {
 			}
 
 			db.getMembershipTriples(document, function(err, members) {
-				if (err) {
+				if (err !== 200) {
 					callback(err);
 					return;
 				}
@@ -541,7 +541,7 @@ var ldpRoutes = function(db, env) {
 					});
 				}
 
-				callback(null, preferenceApplied);
+				callback(200, preferenceApplied);
 			});
 		});
 	}
@@ -568,16 +568,16 @@ var ldpRoutes = function(db, env) {
 		});
 	}
 
-	// reserves a unique URI for a new subApp. will use slug if available,
+	// reserves a unique URI for a new resource. will use slug if available,
 	// but falls back to the usual naming scheme if slug is already used
 	function assignURI(container, slug, callback) {
 		if (slug) {
 			var candidate = addPath(container, slug)
-			db.reserveURI(candidate, function(err) {
-				if (err) {
+			db.reserveURI(candidate, function(status) {
+				if (status !== 201) {
 					uniqueURI(container, callback)
 				} else {
-					callback(null, candidate)
+					callback(201, candidate)
 				}
 			});
 		} else {
@@ -682,7 +682,7 @@ var ldpRoutes = function(db, env) {
 module.exports = function(env) {
 	appBase = env.appBase
 	var db = require('./storage.js') // the abstract storage services
-	require(env.storageImpl)(db)  // instantiate using a specific storage services implementation
+	require(env.config.storageImpl)(db)  // instantiate using a specific storage services implementation
 	module.exports.db = db // allow the database to be used by other middleware
 	db.init(env, function(err) {
 		if (err) {
