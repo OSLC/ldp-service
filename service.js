@@ -23,19 +23,27 @@
  */
 
 var express = require('express')
-var appBase = undefined
 var rdflib = require('rdflib')
-var RDF = rdflib.Namespace("http://www.w3.org/1999/02/22-rdf-syntax-ns#")
-var RDFS = rdflib.Namespace("http://www.w3.org/2000/01/rdf-schema#")
+var rdflib = require('rdflib')
+var ldp = require('./vocab/ldp.js'); // LDP vocabulary
+var rdf = require('./vocab/rdf.js'); // RDF vocabulary
+var media = require('./media.js'); // media types
+var crypto = require('crypto'); // for MD5 (ETags)
 
 // Some convenient namespaces
+var RDF = rdflib.Namespace("http://www.w3.org/1999/02/22-rdf-syntax-ns#")
+var RDFS = rdflib.Namespace("http://www.w3.org/2000/01/rdf-schema#")
 var LDP = rdflib.Namespace('http://www.w3.org/ns/ldp#')
+
+var appBase = undefined;
+var db = undefined;
+
 
 /*
  * Middleware to create the full URI for the request for use in 
  * storage identifiers.
  */
-var fullURL = function(req, res, next) {
+fullURL = function(req, res, next) {
 	req.fullURL = appBase + req.originalUrl;
 	next();
 }
@@ -57,17 +65,11 @@ var rawBody = function(req, res, next) {
 	});
 }
 
-var rdflib = require('rdflib')
-var ldp = require('./vocab/ldp.js'); // LDP vocabulary
-var rdf = require('./vocab/rdf.js'); // RDF vocabulary
-var media = require('./media.js'); // media types
-var crypto = require('crypto'); // for MD5 (ETags)
-
 
 /*
  * Middleware to handle all LDP requests
  */
-var ldpRoutes = function(db, env) {
+var ldpRoutes = function(env) {
 
 	var subApp = express();
 	subApp.use(fullURL);
@@ -119,6 +121,7 @@ var ldpRoutes = function(db, env) {
 			// what to include, the containment triples, membership predicates, or both
 			insertCalculatedTriples(req, document, function(err, preferenceApplied) {
 				if (err !== 200) {
+					console.error(`Error inserting calculated triples: ${err}`);
 					res.sendStatus(500)
 					return
 				}
@@ -246,6 +249,7 @@ var ldpRoutes = function(db, env) {
 		var newTriples = new rdflib.IndexedFormula()
 		rdflib.parse(req.rawBody, newTriples, req.fullURL, serialize, function(err, newTriples) {
 			if (err) {
+				console.log(err.stack)
 				res.sendStatus(500)
 				return
 			}
@@ -343,7 +347,12 @@ var ldpRoutes = function(db, env) {
 							data.add(rdflib.sym(container.membershipResource), rdflib.sym(container.hasMemberRelation), rdflib.sym(loc));
 							db.insertData(data, container.membershipResource, status => {});
 						}
-					} 
+					} else {
+							// update the BasicContainer's member
+							let data = new rdflib.IndexedFormula();
+							data.add(rdflib.sym(req.fullURL), LDP('contains'), rdflib.sym(loc));
+							db.insertData(data, req.fullURL, status => {});
+					}
 					// update the membership resource
 					db.update(newMember, function(err) {
 						if (err !== 201) {
@@ -440,6 +449,7 @@ var ldpRoutes = function(db, env) {
 			patterns.forEach(function(pattern) {
 				db.getMembershipTriples(pattern.container, function(err, containment) {
 					if (err !== 200) {
+						console.log(`Error inserting membership triples: ${err}`)
 						callback(err);
 						return;
 					}
@@ -472,7 +482,6 @@ var ldpRoutes = function(db, env) {
 				callback(err);
 				return;
 			}
-
 			// all done if this is not a container
 			if (document.interactionModel === null) {
 				callback(200, preferenceApplied);
@@ -519,10 +528,9 @@ var ldpRoutes = function(db, env) {
 
 			if (!includeContainment && !includeMembership) {
 				// we're done!
-				callback(null, preferenceApplied);
+				callback(200, preferenceApplied);
 				return;
 			}
-
 			db.getMembershipTriples(document, function(err, members) {
 				if (err !== 200) {
 					callback(err);
@@ -678,12 +686,9 @@ var ldpRoutes = function(db, env) {
 	return subApp
 }
 
-
 module.exports = function(env) {
 	appBase = env.appBase
-	var db = require('./storage.js') // the abstract storage services
-	require(env.config.storageImpl)(db)  // instantiate using a specific storage services implementation
-	module.exports.db = db // allow the database to be used by other middleware
+	db = env.storageService;
 	db.init(env, function(err) {
 		if (err) {
 			console.error(err)
@@ -691,5 +696,5 @@ module.exports = function(env) {
 			return
 		}
 	});
-	return ldpRoutes(db, env)
+	return ldpRoutes(env)
 }

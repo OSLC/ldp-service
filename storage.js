@@ -19,16 +19,12 @@
  * storage.js is an abstract implementation of the storage services required by
  * ldp-service and oslc-service. This module is intended to be implemented on 
  * different data sources such as Apache Jena, the file system, MongoDB, or
- * any other data source in order to provide LDP and OSLC access to those resources.
+ * any other data source in order to provide LDP access to those resources.
  *
  * The abstraction of data storage services is of a container of resources that 
  * represent RDF graphs.
  * 
  */
-
-var ldp = require('./vocab/ldp.js') // LDP vocabulary
-
-var db
 
 /*
  * Initialize the database. This could be done using
