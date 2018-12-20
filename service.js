@@ -15,7 +15,7 @@
  */
 
 /*
- * server.js is Express middleware that handles HTTP requests for LDP resources.
+ * service.js is Express middleware that handles HTTP requests for LDP resources.
  * It is built on an abstract storage implementation, storage.js that can be
  * implemented on different data sources to expose them as LDP resources.
  * The internal, in-memory representation of a resource is an rdflib.js
@@ -23,7 +23,6 @@
  */
 
 var express = require('express')
-var rdflib = require('rdflib')
 var rdflib = require('rdflib')
 var ldp = require('./vocab/ldp.js'); // LDP vocabulary
 var rdf = require('./vocab/rdf.js'); // RDF vocabulary

@@ -11,7 +11,7 @@
     "rdflib": "^0.19.1"
   },
   "engines": {
-    "node": "~8.11.1"
+    "node": "~10.6.0"
   },
   "repository": {
     "type": "git",
