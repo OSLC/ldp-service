@@ -1,17 +1,37 @@
 {
   "name": "ldp-service",
-  "version": "1.0.0",
-  "description": "An Express middleware for LDP that uses MongoDB for persistence of JSON-LD resources",
+  "version": "2.0.0",
+  "description": "Express middleware for the W3C Linked Data Platform",
   "license": "Apache-2.0",
-  "main": "index.js",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
   "author": "Jim Amsden",
   "contributors": "Neil Davis",
   "dependencies": {
-    "express": "~4.16.4",
-    "rdflib": "^0.19.1"
+    "cors": "^2.8.6",
+    "express": "^5.0.1",
+    "rdflib": "^2.2.35",
+    "storage-service": "*"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
   },
   "engines": {
-    "node": "~10.6.0"
+    "node": "^22.11.0"
   },
   "repository": {
     "type": "git",
