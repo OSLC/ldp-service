@@ -504,17 +504,17 @@ export function ldpService(env: StorageEnv, storage: StorageService): express.Ex
 
   resource.post(asyncHandler(async (req, res) => {
     const { status: readStatus, document: container } = await storage.read(req.fullURL);
-    if (readStatus !== 200 || !container) {
-      console.log(`cannot POST to LDPC ${req.fullURL}, got: ${readStatus}`);
+    if (readStatus !== 200 && readStatus !== 404) {
+      console.log(`cannot POST to ${req.fullURL}, got: ${readStatus}`);
       res.sendStatus(readStatus);
       return;
     }
 
-    // POST must be to a container
-    if (!container.interactionModel) {
-      res.set('Allow', 'GET,HEAD,PUT,DELETE,OPTIONS').sendStatus(405);
-      return;
-    }
+    // Determine if the target is a container (has an interactionModel).
+    // When readStatus is 404, the target is a creation factory URL with no
+    // stored container document -- POST still proceeds but we skip
+    // membership/containment triple insertion.
+    const isContainer = !!container?.interactionModel;
 
     let serialize: string;
     if (req.is(media.turtle)) {
@@ -558,19 +558,22 @@ export function ldpService(env: StorageEnv, storage: StorageService): express.Ex
       return;
     }
 
-    // Add the membership triple required to realize the containment
-    if (container.interactionModel === ldp.DirectContainer) {
-      if (container.isMemberOfRelation) {
-        newMember.add(rdflib.sym(loc), rdflib.sym(container.isMemberOfRelation), rdflib.sym(container.membershipResource!));
+    // Add the membership triple required to realize the containment.
+    // Skip when the target is a creation factory (no container document).
+    if (isContainer) {
+      if (container!.interactionModel === ldp.DirectContainer) {
+        if (container!.isMemberOfRelation) {
+          newMember.add(rdflib.sym(loc), rdflib.sym(container!.isMemberOfRelation), rdflib.sym(container!.membershipResource!));
+        } else {
+          const data = new rdflib.IndexedFormula();
+          data.add(rdflib.sym(container!.membershipResource!), rdflib.sym(container!.hasMemberRelation!), rdflib.sym(loc));
+          await storage.insertData(data, container!.membershipResource!);
+        }
       } else {
         const data = new rdflib.IndexedFormula();
-        data.add(rdflib.sym(container.membershipResource!), rdflib.sym(container.hasMemberRelation!), rdflib.sym(loc));
-        await storage.insertData(data, container.membershipResource!);
+        data.add(rdflib.sym(req.fullURL), LDP('contains'), rdflib.sym(loc));
+        await storage.insertData(data, req.fullURL);
       }
-    } else {
-      const data = new rdflib.IndexedFormula();
-      data.add(rdflib.sym(req.fullURL), LDP('contains'), rdflib.sym(loc));
-      await storage.insertData(data, req.fullURL);
     }
 
     const updateStatus = await storage.update(newMember);
