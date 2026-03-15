@@ -45,7 +45,15 @@ interface LdpRequest extends Request {
 }
 
 /**
- * Promisify rdflib.serialize
+ * Promisify rdflib.serialize, with a fix for the RDF/XML blank node bug.
+ *
+ * rdflib's RDF/XML serializer uses typed node elements for blank nodes
+ * (e.g. `<oslc:Service>` instead of `<rdf:Description rdf:type="...">`).
+ * When nested inside `rdf:parseType="Resource"`, the parser interprets
+ * the typed element as a NEW child blank node, breaking round-trip
+ * fidelity.  We fix this by converting typed node elements inside
+ * parseType="Resource" blocks into `<rdf:Description>` with an explicit
+ * `<rdf:type>` property element.
  */
 function serializeRdf(
   subject: rdflib.NamedNode,
@@ -55,10 +63,60 @@ function serializeRdf(
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     rdflib.serialize(subject, graph, base, contentType, (err, content) => {
-      if (err) reject(err);
-      else resolve(content ?? '');
+      if (err) { reject(err); return; }
+      let result = content ?? '';
+      if (contentType === 'application/rdf+xml') {
+        result = fixRdfXmlTypedBlanks(result);
+      }
+      resolve(result);
     });
   });
+}
+
+/**
+ * Fix rdflib's RDF/XML serializer bug: typed node elements inside
+ * rdf:parseType="Resource" are replaced with rdf:Description + rdf:type.
+ *
+ * Matches patterns like:
+ *   <pred rdf:parseType="Resource">
+ *       <ns:TypeName>
+ *           ...children...
+ *       </ns:TypeName>
+ *   </pred>
+ *
+ * And rewrites to:
+ *   <pred rdf:parseType="Resource">
+ *       <rdf:type rdf:resource="expanded-type-uri"/>
+ *       ...children...
+ *   </pred>
+ */
+function fixRdfXmlTypedBlanks(xml: string): string {
+  // Extract namespace declarations from the root element
+  const nsMap = new Map<string, string>();
+  const nsRegex = /xmlns:(\w+)="([^"]+)"/g;
+  let nsMatch: RegExpExecArray | null;
+  while ((nsMatch = nsRegex.exec(xml)) !== null) {
+    nsMap.set(nsMatch[1], nsMatch[2]);
+  }
+
+  // Repeatedly fix innermost typed blank nodes until no more matches.
+  // Each pass fixes the deepest nested level, working outward.
+  const pattern = /(rdf:parseType="Resource">)\s*<((\w+):(\w+))>([\s\S]*?)<\/\2>/g;
+  let prev = '';
+  let result = xml;
+  while (result !== prev) {
+    prev = result;
+    result = result.replace(
+      pattern,
+      (match, parseTypeClose, typeQName, typePrefix, typeLocal, children) => {
+        const typeNS = nsMap.get(typePrefix);
+        if (!typeNS) return match;
+        const typeURI = typeNS + typeLocal;
+        return `${parseTypeClose}\n<rdf:type rdf:resource="${typeURI}"/>${children}`;
+      }
+    );
+  }
+  return result;
 }
 
 /**
