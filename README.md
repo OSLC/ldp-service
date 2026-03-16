@@ -1,62 +1,116 @@
 # ldp-service
 
-[![npm](https://img.shields.io/npm/v/ldp-service)](https://www.npmjs.com/package/ldp-service)
-[![Discourse status](https://img.shields.io/discourse/https/meta.discourse.org/status.svg)](https://forum.open-services.net/)
-[![Gitter](https://img.shields.io/gitter/room/nwjs/nw.js.svg)](https://gitter.im/OSLC/chat)
+Express middleware implementing the [W3C Linked Data Platform (LDP)](http://www.w3.org/2012/ldp) protocol. It handles HTTP operations on LDP resources, performs content negotiation across RDF serialization formats, and delegates persistence to a pluggable storage backend.
 
-A simple Node.js module providing Express middleware to create a [W3C Linked Data Platform](http://www.w3.org/2012/ldp) server. The service uses abstract module storage.js for persistence, jsonld.js for JSON-LD support, and a few other JavaScript libraries.  A sample app using the LDP middleware service is running at [http://ldp-app.mybluemix.net](http://ldp-app.mybluemix.net). Apps that use ldp-service can utilize existing concrete implementations of storage.js: ldp-service-jena, ldp-service-fs and/or ldp-service-mongodb. 
+Many thanks to Steve Speicher and Sam Padgett for their valuable contribution to LDP and this middleware.
 
-ldp-service supports LDP basic and direct containers. Indirect
-containers and non-RDF source are not implemented.
+## Build
 
-Many thanks to Steve Speicher and Sam Padgett for their valuable contribution to LDP and this LDP middleware.
+```bash
+npm install
+npm run build
+```
 
-Module planning, maintenance and issues can be see at at the [ldp-service](https://hub.jazz.net/project/jamsden/ldp-service/overview) IBM Bluemix DevOps Services project.
+Requires Node.js >= 22.11.0. The module is written in TypeScript and compiles to ESM (`"type": "module"`).
 
+## Usage
 
-## Using
+ldp-service exports a factory function that returns an Express sub-application. Mount it in your Express app alongside a storage backend:
 
-1) Install the required modules
+```typescript
+import express from 'express';
+import { ldpService } from 'ldp-service';
+import { FsStorage } from 'ldp-service-fs';   // or any StorageService implementation
 
-Install [Node.js](http://nodejs.org). 
+const app = express();
+const env = { appBase: 'http://localhost:3000', context: '/r/' };
+const storage = new FsStorage();
+await storage.init(env);
 
-Install and start [MongoDB](http://docs.mongodb.org/manual/installation/).
+app.use(ldpService(env, storage));
 
-Install express.js and create a sample express app
+app.listen(3000);
+```
 
-	$ npm install express -g
-	$ express --git -e <appDir>
+The `env.context` property (default `'/r/'`) determines the URL path prefix for LDP resources. All requests under that prefix are handled by the middleware.
 
-2) Edit the package.json file to add a dependency on ldp-service
+## What It Does
 
-	"dependencies": {"ldp-service": "~0.0.1"},
+### LDP Operations
 
-3) Edit app.js and add whatever Express middleware you need including ldp-service. ldp-service also provides access to its MongoDB database in case additional middleware needs direct access to the database.
+The middleware implements the following HTTP methods on LDP resources:
 
-	var ldpService = require('ldp-service');
-	app.use(ldpService());
-	var db = ldpService.db; // incase further middleware needs access to the database
+- **GET** -- Read a resource or container, with dynamically computed containment and membership triples.
+- **HEAD** -- Same as GET but returns headers only (no body).
+- **POST** -- Create a new resource in a container. Honors the `Slug` header for URI assignment.
+- **PUT** -- Update an existing RDF Source or create a resource at a specific URI. Requires `If-Match` for updates.
+- **DELETE** -- Remove a resource and clean up containment/membership triples in the parent container.
+- **OPTIONS** -- Return allowed methods and LDP headers for a resource.
 
-4) Configuration defaults can be found in config.json. These may be overridden by variables in the environment, including Bluemix variables if deployed in a Bluemix app.
+### Resource Types
 
-5) To start the app, run these commands
+- **BasicContainer** (`ldp:BasicContainer`) -- Containment via `ldp:contains`.
+- **DirectContainer** (`ldp:DirectContainer`) -- Membership via configurable `ldp:membershipResource`, `ldp:hasMemberRelation`, and `ldp:isMemberOfRelation` properties.
+- **RDF Source** (`ldp:RDFSource`) -- Non-container RDF resources.
 
-    $ npm install
-    $ node app.js
+### Content Negotiation
 
-Finally, point your browser to
-[http://localhost:3000/](http://localhost:3000/).
+Supports three RDF serialization formats via the `Accept` and `Content-Type` headers:
+
+- `text/turtle`
+- `application/ld+json` (and `application/json`)
+- `application/rdf+xml`
+
+### Conditional Requests
+
+- Generates weak `ETag` headers (MD5-based) on responses.
+- Supports `If-None-Match` on GET (returns 304 when unchanged).
+- Requires `If-Match` on PUT updates (returns 412 on mismatch, 428 if missing).
+
+### Prefer Header
+
+Supports the LDP `Prefer` header for controlling response content:
+
+- `ldp:PreferMinimalContainer` / `ldp:PreferEmptyContainer` -- Omit containment and membership triples.
+- `ldp:PreferContainment` -- Explicitly include or omit containment triples.
+- `ldp:PreferMembership` -- Explicitly include or omit membership triples.
+
+Returns `Preference-Applied: return=representation` when preferences are honored.
+
+### CORS
+
+The middleware sets CORS headers on all responses, allowing browser-based clients to interact with LDP resources.
+
+## Storage Backends
+
+Persistence is delegated to a `StorageService` interface defined in the `storage-service` package. Three implementations are available:
+
+| Package | Backend | Description |
+|---|---|---|
+| `ldp-service-fs` | File system | Stores each named graph as a file on disk |
+| `ldp-service-mongodb` | MongoDB | Stores graphs in a MongoDB collection |
+| `ldp-service-jena` | Apache Jena | Delegates to a Jena Fuseki triplestore via SPARQL |
+
+To use a different backend, implement the `StorageService` interface from `storage-service` and pass it to the `ldpService()` factory.
+
+## Architecture
+
+ldp-service is a protocol-level module. It knows how to speak LDP over HTTP but has no knowledge of OSLC or any domain-specific vocabulary.
+
+The `oslc-service` module builds on top of ldp-service, adding OSLC-specific capabilities such as service provider catalogs, creation factories, selection and creation dialogs, resource previews, and query support. Applications typically use oslc-service rather than ldp-service directly.
+
+The dependency chain is:
+
+```
+storage-service  (interface)
+      ^
+ldp-service  (LDP protocol)
+      ^
+oslc-service  (OSLC protocol)
+      ^
+application  (e.g., oslc-server, mrm-server)
+```
 
 ## License
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-   http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+Licensed under the Apache License, Version 2.0. See [LICENSE](http://www.apache.org/licenses/LICENSE-2.0) for details.
