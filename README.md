@@ -20,7 +20,7 @@ ldp-service exports a factory function that returns an Express sub-application. 
 ```typescript
 import express from 'express';
 import { ldpService } from 'ldp-service';
-import { FsStorage } from 'ldp-service-fs';   // or any StorageService implementation
+import { FsStorage } from 'fs-storage-service';   // or any StorageService implementation
 
 const app = express();
 const env = { appBase: 'http://localhost:3000', context: '/r/' };
@@ -87,9 +87,9 @@ Persistence is delegated to a `StorageService` interface defined in the `storage
 
 | Package | Backend | Description |
 |---|---|---|
-| `ldp-service-fs` | File system | Stores each named graph as a file on disk |
-| `ldp-service-mongodb` | MongoDB | Stores graphs in a MongoDB collection |
-| `ldp-service-jena` | Apache Jena | Delegates to a Jena Fuseki triplestore via SPARQL |
+| `fs-storage-service` | File system | Stores each named graph as a file on disk |
+| `mongodb-storage-service` | MongoDB | Stores graphs in a MongoDB collection |
+| `jena-storage-service` | Apache Jena | Delegates to a Jena Fuseki triplestore via SPARQL |
 
 To use a different backend, implement the `StorageService` interface from `storage-service` and pass it to the `ldpService()` factory.
 
